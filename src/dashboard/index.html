@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Soroban Event Indexer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1420;
+    --panel: #161c2c;
+    --border: #262e42;
+    --text: #e6e9f2;
+    --muted: #8890a6;
+    --accent: #5b8cff;
+    --ok: #35c98f;
+    --warn: #f2b84b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  #status {
+    display: flex;
+    gap: 18px;
+    font-size: 12px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  #status b { color: var(--text); font-family: var(--mono); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.ok { background: var(--ok); }
+  .dot.bad { background: #e5534b; }
+  main { padding: 16px 24px 40px; max-width: 1200px; margin: 0 auto; }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .toolbar input, .toolbar select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .toolbar button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .toolbar button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  #gaps {
+    display: none;
+    background: #3a2a12;
+    border: 1px solid var(--warn);
+    color: var(--warn);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    margin-bottom: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+  thead th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    font-size: 12.5px;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.new { animation: flash 1.6s ease-out; }
+  @keyframes flash { from { background: rgba(91,140,255,0.25); } to { background: transparent; } }
+  .ledger { font-family: var(--mono); color: var(--muted); }
+  .type-badge {
+    display: inline-block;
+    background: rgba(91,140,255,0.15);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .kv { font-family: var(--mono); font-size: 11.5px; color: var(--muted); white-space: pre-wrap; word-break: break-all; max-width: 360px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 14px; }
+  footer button { margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Soroban Event Indexer <span id="contract-id">— loading…</span></h1>
+  <div id="status">
+    <span><span class="dot" id="health-dot"></span><span id="health-text">connecting…</span></span>
+    <span>Last indexed ledger: <b id="last-ledger">—</b></span>
+    <span>Events stored: <b id="event-count">—</b></span>
+  </div>
+</header>
+<main>
+  <div id="gaps"></div>
+  <div class="toolbar">
+    <input id="f-type" placeholder="event type (e.g. transfer)" />
+    <input id="f-from" placeholder="from ledger" inputmode="numeric" />
+    <input id="f-to" placeholder="to ledger" inputmode="numeric" />
+    <select id="f-live">
+      <option value="live">Live feed (auto-refresh)</option>
+      <option value="paused">Paused</option>
+    </select>
+    <button id="apply">Apply filters</button>
+    <button id="clear" class="secondary">Clear</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:90px">Ledger</th>
+        <th style="width:130px">Type</th>
+        <th>Topics</th>
+        <th>Value</th>
+        <th style="width:170px">Tx Hash</th>
+        <th style="width:150px">Closed At</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" hidden>No events indexed yet.</div>
+  <footer>
+    <span id="page-info"></span>
+    <button id="load-more" class="secondary" hidden>Load more</button>
+  </footer>
+</main>
+<script>
+(function () {
+  const API = ""; // same-origin: server.ts serves this file alongside the API
+  const POLL_MS = 4000;
+
+  const els = {
+    contractId: document.getElementById("contract-id"),
+    healthDot: document.getElementById("health-dot"),
+    healthText: document.getElementById("health-text"),
+    lastLedger: document.getElementById("last-ledger"),
+    eventCount: document.getElementById("event-count"),
+    gaps: document.getElementById("gaps"),
+    rows: document.getElementById("rows"),
+    empty: document.getElementById("empty"),
+    pageInfo: document.getElementById("page-info"),
+    loadMore: document.getElementById("load-more"),
+    fType: document.getElementById("f-type"),
+    fFrom: document.getElementById("f-from"),
+    fTo: document.getElementById("f-to"),
+    fLive: document.getElementById("f-live"),
+    apply: document.getElementById("apply"),
+    clear: document.getElementById("clear"),
+  };
+
+  let knownIds = new Set();
+  let nextCursor = null;
+  let timer = null;
+
+  function fmtVal(v) {
+    if (v === null || v === undefined) return "—";
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  }
+
+  function buildQuery(cursor) {
+    const p = new URLSearchParams();
+    if (els.fType.value.trim()) p.set("type", els.fType.value.trim());
+    if (els.fFrom.value.trim()) p.set("from", els.fFrom.value.trim());
+    if (els.fTo.value.trim()) p.set("to", els.fTo.value.trim());
+    p.set("limit", "50");
+    if (cursor) p.set("cursor", String(cursor));
+    return p.toString();
+  }
+
+  function renderRow(ev, isNew) {
+    const tr = document.createElement("tr");
+    if (isNew) tr.className = "new";
+    tr.innerHTML = `
+      <td class="ledger">${ev.ledger}</td>
+      <td>${ev.eventType ? `<span class="type-badge">${escapeHtml(ev.eventType)}</span>` : "—"}</td>
+      <td class="kv">${escapeHtml(fmtVal(ev.topics))}</td>
+      <td class="kv">${escapeHtml(fmtVal(ev.value))}</td>
+      <td class="kv">${ev.txHash ? escapeHtml(ev.txHash.slice(0, 16)) + "…" : "—"}</td>
+      <td class="kv">${ev.ledgerClosedAt ? new Date(ev.ledgerClosedAt).toLocaleString() : "—"}</td>
+    `;
+    return tr;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  async function refreshHealth() {
+    try {
+      const res = await fetch(`${API}/health`);
+      const data = await res.json();
+      els.contractId.textContent = "— " + (data.contractId || "no contract configured");
+      els.lastLedger.textContent = data.lastIndexedLedger ?? "—";
+      els.eventCount.textContent = data.eventCount ?? "—";
+      els.healthDot.className = "dot ok";
+      els.healthText.textContent = "connected";
+    } catch (err) {
+      els.healthDot.className = "dot bad";
+      els.healthText.textContent = "API unreachable";
+    }
+  }
+
+  async function refreshGaps() {
+    try {
+      const res = await fetch(`${API}/gaps`);
+      const data = await res.json();
+      if (data.gaps && data.gaps.length > 0) {
+        const g = data.gaps[0];
+        els.gaps.style.display = "block";
+        els.gaps.textContent = `⚠ Gap detected: ledgers ${g.fromLedger}-${g.toLedger} could not be indexed (${g.reason}). ${data.gaps.length} gap(s) total.`;
+      } else {
+        els.gaps.style.display = "none";
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  async function refreshFeed(reset) {
+    if (reset) {
+      knownIds = new Set();
+      nextCursor = null;
+      els.rows.innerHTML = "";
+    }
+    try {
+      const res = await fetch(`${API}/events?${buildQuery(reset ? null : undefined)}`);
+      const data = await res.json();
+      const events = data.events || [];
+      els.empty.hidden = events.length > 0 || els.rows.children.length > 0;
+
+      if (reset) {
+        for (const ev of events) {
+          knownIds.add(ev.id);
+          els.rows.appendChild(renderRow(ev, false));
+        }
+        nextCursor = data.pagination ? data.pagination.nextCursor : null;
+      } else {
+        // Live mode: prepend anything newer than what we've already shown.
+        const fresh = events.filter((ev) => !knownIds.has(ev.id));
+        for (const ev of fresh.reverse()) {
+          knownIds.add(ev.id);
+          els.rows.insertBefore(renderRow(ev, true), els.rows.firstChild);
+        }
+      }
+      els.loadMore.hidden = !nextCursor;
+      els.pageInfo.textContent = `${els.rows.children.length} event(s) shown`;
+    } catch (err) {
+      // handled by health check
+    }
+  }
+
+  els.loadMore.addEventListener("click", async () => {
+    if (!nextCursor) return;
+    try {
+      const res = await fetch(`${API}/events?${buildQuery(nextCursor)}`);
+      const data = await res.json();
+      for (const ev of data.events || []) {
+        knownIds.add(ev.id);
+        els.rows.appendChild(renderRow(ev, false));
+      }
+      nextCursor = data.pagination ? data.pagination.nextCursor : null;
+      els.loadMore.hidden = !nextCursor;
+      els.pageInfo.textContent = `${els.rows.children.length} event(s) shown`;
+    } catch {
+      /* ignore */
+    }
+  });
+
+  els.apply.addEventListener("click", () => refreshFeed(true));
+  els.clear.addEventListener("click", () => {
+    els.fType.value = "";
+    els.fFrom.value = "";
+    els.fTo.value = "";
+    refreshFeed(true);
+  });
+  els.fLive.addEventListener("change", () => {
+    if (els.fLive.value === "live") start();
+    else stop();
+  });
+
+  function tick() {
+    refreshHealth();
+    refreshGaps();
+    refreshFeed(false);
+  }
+
+  function start() {
+    stop();
+    tick();
+    timer = setInterval(tick, POLL_MS);
+  }
+  function stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+  }
+
+  refreshFeed(true);
+  start();
+})();
+</script>
+</body>
+</html>
