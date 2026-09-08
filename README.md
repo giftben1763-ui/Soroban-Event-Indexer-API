@@ -42,6 +42,7 @@ for the API) independently, as long as they agree on `DB_PATH`.
 - [Testing](#testing)
 - [Limitations](#limitations)
 - [Project layout](#project-layout)
+- [Contributing](CONTRIBUTING.md)
 
 ## How it works
 
